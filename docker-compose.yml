@@ -1,0 +1,50 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: document-ai-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: document-ai-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_API_KEY=hackathon_secret_123
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    depends_on:
+      - backend
+
+  redis:
+    image: redis:alpine
+    container_name: document-ai-redis
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: document-ai-celery-worker
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "src.workers.celery_app:celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      - redis
