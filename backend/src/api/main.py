@@ -10,7 +10,7 @@ from PIL import Image
 from docx import Document
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, AliasChoices, model_validator
 from google import genai
 from dotenv import load_dotenv
 
@@ -51,9 +51,40 @@ API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
 
 
 class DocumentRequest(BaseModel):
-    fileName: str
-    fileType: str
-    fileBase64: str
+    fileName: str = Field(validation_alias=AliasChoices("fileName", "filename", "name"))
+    fileType: str = Field(validation_alias=AliasChoices("fileType", "file_type", "type"))
+    fileBase64: str = Field(validation_alias=AliasChoices("fileBase64", "file_base64", "file"))
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_payload(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        # Normalize camelCase/snake_case and common legacy keys.
+        normalized = dict(data)
+        if "fileName" not in normalized:
+            if "filename" in normalized:
+                normalized["fileName"] = normalized["filename"]
+            elif "name" in normalized:
+                normalized["fileName"] = normalized["name"]
+        if "fileType" not in normalized:
+            if "file_type" in normalized:
+                normalized["fileType"] = normalized["file_type"]
+            elif "type" in normalized:
+                normalized["fileType"] = normalized["type"]
+        if "fileBase64" not in normalized:
+            if "file_base64" in normalized:
+                normalized["fileBase64"] = normalized["file_base64"]
+            elif "file" in normalized:
+                normalized["fileBase64"] = normalized["file"]
+
+        # Accept full Data URL and keep only raw base64 payload.
+        maybe_base64 = normalized.get("fileBase64")
+        if isinstance(maybe_base64, str) and maybe_base64.startswith("data:") and "," in maybe_base64:
+            normalized["fileBase64"] = maybe_base64.split(",", 1)[1]
+
+        return normalized
 
 
 class EntitiesResponse(BaseModel):
