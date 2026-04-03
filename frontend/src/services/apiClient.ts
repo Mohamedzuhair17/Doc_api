@@ -1,7 +1,10 @@
 import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const API_KEY = import.meta.env.VITE_API_KEY || "";
+const DEFAULT_API_URL = "https://doc-api-efwm.onrender.com";
+const rawApiUrl = (import.meta.env.VITE_API_URL || "").trim();
+const isAbsoluteUrl = /^https?:\/\//i.test(rawApiUrl);
+const API_URL = (isAbsoluteUrl ? rawApiUrl : DEFAULT_API_URL).replace(/\/+$/, "");
+const API_KEY = (import.meta.env.VITE_API_KEY || "").trim();
 
 const headers: Record<string, string> = {};
 if (API_KEY) {

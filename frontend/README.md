@@ -10,7 +10,7 @@ This frontend is a custom React + Vite + TypeScript application for your Documen
    ```
 2. Configure backend URL and API key in `.env`:
    ```ini
-   VITE_API_URL=http://localhost:8000
+   VITE_API_URL=https://doc-api-efwm.onrender.com
    VITE_API_KEY=hackathon_secret_123
    ```
 3. Start application:
@@ -20,7 +20,7 @@ This frontend is a custom React + Vite + TypeScript application for your Documen
 
 ## Backend requirements
 
-- Document AI backend running on `http://localhost:8000`
+- Document AI backend running on `https://doc-api-efwm.onrender.com` (or your own API host)
 - Endpoint: `POST /api/document-analyze`
 - Endpoint: `GET /api/task/{task_id}`
 - Header: `x-api-key: <API_SECRET_KEY>`
