@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import logging
+from typing import Optional
 
 import fitz  # PyMuPDF
 import pytesseract
@@ -12,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, AliasChoices, model_validator
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -198,10 +200,84 @@ Document text:
     return json.loads(raw)
 
 
+def infer_mime_type(file_type: str, file_name: str) -> str:
+    ft = (file_type or "").lower().strip()
+    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+
+    if ft == "pdf" or ext == "pdf":
+        return "application/pdf"
+    if ft == "docx" or ext == "docx":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if ft in ("png",) or ext == "png":
+        return "image/png"
+    if ft in ("jpg", "jpeg") or ext in ("jpg", "jpeg"):
+        return "image/jpeg"
+    if ft in ("tif", "tiff") or ext in ("tif", "tiff"):
+        return "image/tiff"
+    if ft in ("bmp",) or ext == "bmp":
+        return "image/bmp"
+    if ft == "image":
+        return "image/png"
+    return "application/octet-stream"
+
+
+def analyse_with_gemini_file(file_bytes: bytes, mime_type: str) -> dict:
+    prompt = """
+You are a document analysis AI.
+Analyse the attached document and return a JSON object with EXACTLY this structure - no markdown, no code fences, raw JSON only:
+
+{
+  "summary": "A concise 2-3 sentence summary of the document.",
+  "entities": {
+    "names": ["list of person names found"],
+    "dates": ["list of dates found"],
+    "organizations": ["list of organization names found"],
+    "amounts": ["list of monetary amounts found"]
+  },
+  "sentiment": "Positive or Neutral or Negative"
+}
+
+Rules:
+- summary: concise, factual, 2-3 sentences max
+- entities: extract only what actually appears in the document; use empty list [] if none found
+- sentiment: must be exactly one of: Positive, Neutral, Negative
+"""
+    response = None
+    last_error = None
+    selected_model = None
+    for model_name in FLASH_MODEL_CANDIDATES:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                ],
+            )
+            selected_model = model_name
+            break
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Flash model unavailable for file analysis: {model_name} ({e})")
+
+    if response is None:
+        raise RuntimeError(f"No available Flash model found for file analysis: {last_error}")
+
+    logger.info(f"Gemini file analysis model: {selected_model}")
+    raw = response.text.strip()
+
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    return json.loads(raw)
+
+
 @app.post("/api/document-analyze", response_model=DocumentResponse)
 async def analyze_document(
     request: DocumentRequest,
-    x_api_key: str = Header(...),
+    x_api_key: Optional[str] = Header(default=None),
 ):
     if not API_SECRET_KEY or x_api_key != API_SECRET_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -211,19 +287,24 @@ async def analyze_document(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 encoding")
 
+    text = ""
+    extraction_error = None
     try:
         text = extract_text(request.fileType, file_bytes)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Text extraction failed: {e}")
-        raise HTTPException(status_code=422, detail=f"Could not extract text: {str(e)}")
-
-    if not text:
-        raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+        extraction_error = str(e)
+        logger.warning(f"Text extraction failed, falling back to Gemini file analysis: {e}")
 
     try:
-        result = analyse_with_gemini(text)
+        if text:
+            result = analyse_with_gemini(text)
+        else:
+            if extraction_error:
+                logger.info(f"Proceeding with file-level analysis after extraction issue: {extraction_error}")
+            mime_type = infer_mime_type(request.fileType, request.fileName)
+            result = analyse_with_gemini_file(file_bytes, mime_type)
     except json.JSONDecodeError as e:
         logger.error(f"Gemini returned invalid JSON: {e}")
         raise HTTPException(status_code=500, detail="AI analysis returned invalid response")
