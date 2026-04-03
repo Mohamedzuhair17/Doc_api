@@ -106,7 +106,20 @@ def extract_text_pdf(data: bytes) -> str:
     text_parts = []
     with fitz.open(stream=data, filetype="pdf") as doc:
         for page in doc:
-            text_parts.append(page.get_text())
+            page_text = page.get_text().strip()
+            if page_text:
+                text_parts.append(page_text)
+                continue
+
+            # Fallback for scanned/image-only PDFs.
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                image = Image.open(io.BytesIO(pix.tobytes("png")))
+                ocr_text = pytesseract.image_to_string(image).strip()
+                if ocr_text:
+                    text_parts.append(ocr_text)
+            except Exception as e:
+                logger.warning(f"OCR fallback failed for PDF page {page.number + 1}: {e}")
     return "\n".join(text_parts).strip()
 
 
