@@ -20,6 +20,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+FLASH_MODEL_CANDIDATES = [
+    model_name.strip()
+    for model_name in os.environ.get(
+        "GEMINI_FLASH_MODELS",
+        "gemini-2.0-flash-lite,gemini-2.0-flash,gemini-1.5-flash",
+    ).split(",")
+    if model_name.strip()
+]
 
 app = FastAPI(title="DocAI", version="1.0.0")
 
@@ -117,10 +125,25 @@ Document text:
 {text[:8000]}
 \"\"\"
 """
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-    )
+    response = None
+    last_error = None
+    selected_model = None
+    for model_name in FLASH_MODEL_CANDIDATES:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            selected_model = model_name
+            break
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Flash model unavailable: {model_name} ({e})")
+
+    if response is None:
+        raise RuntimeError(f"No available Flash model found: {last_error}")
+
+    logger.info(f"Gemini analysis model: {selected_model}")
     raw = response.text.strip()
 
     if raw.startswith("```"):
