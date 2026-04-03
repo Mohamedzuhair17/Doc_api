@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import json from "react-syntax-highlighter/dist/esm/languages/hljs/json";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
-import { usePolling } from "@/hooks/usePolling";
 import { useUIStore } from "@/store/uiStore";
 import { toast } from "sonner";
 
@@ -15,13 +14,12 @@ const tabs = [
 ];
 
 const ResultCard = () => {
-  const activeTaskId = useUIStore((s) => s.activeTaskId);
-  const { data } = usePolling(activeTaskId);
+  const data = useUIStore((s) => s.analysisResult);
   const [activeTab, setActiveTab] = useState("text");
 
-  if (!data?.result || data.status !== "completed") return null;
+  if (!data || data.status !== "success") return null;
 
-  const { summary, entities, sentiment } = data.result;
+  const { summary, entities, sentiment } = data;
   const jsonStr = JSON.stringify(entities, null, 2);
 
   const copy = (text: string) => {

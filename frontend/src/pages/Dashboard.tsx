@@ -1,6 +1,5 @@
 import { useRef } from "react";
 import { useUIStore } from "@/store/uiStore";
-import { usePolling } from "@/hooks/usePolling";
 import HeroSection from "@/components/HeroSection";
 import FileUploader from "@/components/FileUploader";
 import ProgressPanel from "@/components/ProgressPanel";
@@ -9,9 +8,8 @@ import ResultCard from "@/components/ResultCard";
 const Dashboard = () => {
   const uploadRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
-  const activeTaskId = useUIStore((s) => s.activeTaskId);
-  const { data } = usePolling(activeTaskId);
-  const hasResults = data?.status === "completed";
+  const analysisResult = useUIStore((s) => s.analysisResult);
+  const hasResults = !!analysisResult;
 
   const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) => {
     ref.current?.scrollIntoView({ behavior: "smooth" });
@@ -30,7 +28,7 @@ const Dashboard = () => {
           </div>
           <div className="flex items-center gap-6 text-sm">
             <button onClick={() => scrollTo(uploadRef)} className="text-muted-foreground hover:text-foreground transition">Upload</button>
-            {activeTaskId && (
+            {hasResults && (
               <button onClick={() => scrollTo(resultsRef)} className="text-muted-foreground hover:text-foreground transition">Results</button>
             )}
           </div>

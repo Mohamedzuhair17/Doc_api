@@ -1,139 +1,186 @@
-"""
-FastAPI Backend with Caching
-Returns task ID immediately (no timeout risk).
-"""
-
-from fastapi import FastAPI, Header, HTTPException, status, Depends, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from src.api.schemas import DocumentRequest, TaskResponse
-from src.core.config import settings
-from celery.result import AsyncResult
-import redis
-import json
-import uuid
 import os
-import logging
 import base64
+import io
+import json
+import logging
 
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+from docx import Document
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="Advanced Document AI API",
-    version="1.0",
-    description="Production-grade document processing with OCR correction"
-)
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Enable CORS for local frontend development and production
+app = FastAPI(title="DocAI", version="1.0.0")
+
+origins = [
+    "https://doc-api-nu.vercel.app",
+    "https://doc-api-git-main-mohamedzuhair17s-projects.vercel.app",
+    "https://doc-6hkam2osk-mohamedzuhair17s-projects.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "https://doc-api-nu.vercel.app",
-        "https://doc-api-git-main-mohamedzuhair17s-projects.vercel.app",
-        "https://doc-6hkam2osk-mohamedzuhair17s-projects.vercel.app",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Redis client for direct cache access if needed, 
-# although Celery handles task result storage in Redis.
-redis_client = redis.from_url(settings.CELERY_RESULT_BACKEND)
-
-# Middleware-like verification
-async def verify_api_key(x_api_key: str = Header(...)):
-    """Validate API key from header."""
-    if x_api_key != settings.API_SECRET_KEY:
-        logger.warning(f"Unauthorized access attempt with key: {x_api_key}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    return x_api_key
+API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
 
 
-@app.post("/api/document-analyze", status_code=202, response_model=TaskResponse)
+class DocumentRequest(BaseModel):
+    fileName: str
+    fileType: str
+    fileBase64: str
+
+
+class EntitiesResponse(BaseModel):
+    names: list[str]
+    dates: list[str]
+    organizations: list[str]
+    amounts: list[str]
+
+
+class DocumentResponse(BaseModel):
+    status: str
+    fileName: str
+    summary: str
+    entities: EntitiesResponse
+    sentiment: str
+
+
+def extract_text_pdf(data: bytes) -> str:
+    text_parts = []
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        for page in doc:
+            text_parts.append(page.get_text())
+    return "\n".join(text_parts).strip()
+
+
+def extract_text_docx(data: bytes) -> str:
+    doc = Document(io.BytesIO(data))
+    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+
+def extract_text_image(data: bytes) -> str:
+    image = Image.open(io.BytesIO(data))
+    return pytesseract.image_to_string(image).strip()
+
+
+def extract_text(file_type: str, data: bytes) -> str:
+    ft = file_type.lower().strip()
+    if ft == "pdf":
+        return extract_text_pdf(data)
+    if ft == "docx":
+        return extract_text_docx(data)
+    if ft in ("image", "png", "jpg", "jpeg", "tiff", "bmp"):
+        return extract_text_image(data)
+    raise HTTPException(status_code=400, detail=f"Unsupported fileType: {file_type}")
+
+
+def analyse_with_gemini(text: str) -> dict:
+    prompt = f"""
+You are a document analysis AI. Analyse the following document text and return a JSON object with EXACTLY this structure - no markdown, no code fences, raw JSON only:
+
+{{
+  "summary": "A concise 2-3 sentence summary of the document.",
+  "entities": {{
+    "names": ["list of person names found"],
+    "dates": ["list of dates found"],
+    "organizations": ["list of organization names found"],
+    "amounts": ["list of monetary amounts found"]
+  }},
+  "sentiment": "Positive or Neutral or Negative"
+}}
+
+Rules:
+- summary: concise, factual, 2-3 sentences max
+- entities: extract only what actually appears in the text; use empty list [] if none found
+- sentiment: must be exactly one of: Positive, Neutral, Negative
+
+Document text:
+\"\"\"
+{text[:8000]}
+\"\"\"
+"""
+    response = model.generate_content(prompt)
+    raw = response.text.strip()
+
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    return json.loads(raw)
+
+
+@app.post("/api/document-analyze", response_model=DocumentResponse)
 async def analyze_document(
-    file: UploadFile = File(...),
-) -> TaskResponse:
-    """
-    Analyze document (async).
-    
-    Returns immediately with task ID. Processing happens in background.
-    """
-    
-    # Import worker lazily so docs/root can boot even if worker-only deps
-    # are unavailable in serverless environments.
-    from src.workers.tasks import process_document
-
-    # Read file content
-    content = await file.read()
-    file_base64 = base64.b64encode(content).decode('utf-8')
-    
-    # Determine file type from filename
-    filename = file.filename or ""
-    if filename.lower().endswith('.pdf'):
-        file_type = 'pdf'
-    elif filename.lower().endswith('.docx'):
-        file_type = 'docx'
-    else:
-        file_type = 'image'
-
-    # Generate unique task ID
-    task_id = str(uuid.uuid4())
-    
-    # Queue task with the generated ID
-    process_document.apply_async(
-        args=[file_base64, file_type, task_id],
-        task_id=task_id
-    )
-    
-    logger.info(f"Task {task_id} queued for {file_type}")
-    
-    return TaskResponse(
-        task_id=task_id,
-        status="queued"
-    )
-
-
-@app.get("/api/task/{task_id}", response_model=TaskResponse)
-async def get_task_status(
-    task_id: str, 
-    api_key: str = Depends(verify_api_key)
+    request: DocumentRequest,
+    x_api_key: str = Header(...),
 ):
-    """Get task status and result."""
-    
-    # Use Celery's AsyncResult to retrieve task information
-    result = AsyncResult(task_id)
-    
-    if result.state == 'PENDING':
-        return TaskResponse(task_id=task_id, status="queued")
-    elif result.state == 'STARTED':
-        return TaskResponse(task_id=task_id, status="processing")
-    elif result.state == 'SUCCESS':
-        data = result.result
-        return TaskResponse(
-            task_id=task_id,
-            status="completed",
-            result=data.get("result")
-        )
-    elif result.state == 'FAILURE':
-        logger.error(f"Task {task_id} failed: {result.info}")
-        return TaskResponse(task_id=task_id, status="failed")
-    else:
-        return TaskResponse(task_id=task_id, status=result.state.lower())
+    if not API_SECRET_KEY or x_api_key != API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        file_bytes = base64.b64decode(request.fileBase64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 encoding")
+
+    try:
+        text = extract_text(request.fileType, file_bytes)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Text extraction failed: {e}")
+        raise HTTPException(status_code=422, detail=f"Could not extract text: {str(e)}")
+
+    if not text:
+        raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+
+    try:
+        result = analyse_with_gemini(text)
+    except json.JSONDecodeError as e:
+        logger.error(f"Gemini returned invalid JSON: {e}")
+        raise HTTPException(status_code=500, detail="AI analysis returned invalid response")
+    except Exception as e:
+        logger.error(f"Gemini analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+
+    return DocumentResponse(
+        status="success",
+        fileName=request.fileName,
+        summary=result.get("summary", ""),
+        entities=EntitiesResponse(
+            names=result.get("entities", {}).get("names", []),
+            dates=result.get("entities", {}).get("dates", []),
+            organizations=result.get("entities", {}).get("organizations", []),
+            amounts=result.get("entities", {}).get("amounts", []),
+        ),
+        sentiment=result.get("sentiment", "Neutral"),
+    )
 
 
 @app.get("/")
 async def root():
-    """Simple root endpoint to avoid 404 on /."""
-    return {"message": "Document AI backend running"}
+    return {"status": "ok", "service": "DocAI"}
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
+async def health():
     return {"status": "ok"}

@@ -4,7 +4,7 @@ import { useUIStore } from "@/store/uiStore";
 import { toast } from "sonner";
 
 export const useUpload = () => {
-  const { setCurrentFile, updateFileProgress, setFileStatus, setFileTaskId } =
+  const { setCurrentFile, updateFileProgress, setFileStatus, setAnalysisResult } =
     useUIStore();
 
   const mutation = useMutation({
@@ -20,9 +20,9 @@ export const useUpload = () => {
     },
     onSuccess: (data) => {
       setFileStatus("uploaded");
-      setFileTaskId(data.task_id);
+      setAnalysisResult(data);
       toast.success("Document uploaded successfully", {
-        description: `Task ID: ${data.task_id}`,
+        description: `Analysis completed for ${data.fileName}`,
       });
     },
     onError: (error: Error) => {

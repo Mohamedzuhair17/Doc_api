@@ -14,15 +14,16 @@ const apiClient = axios.create({
 });
 
 export interface UploadResponse {
-  task_id: string;
-  status: "queued";
-}
-
-export interface TaskStatus {
-  task_id: string;
-  status: "queued" | "processing" | "completed" | "failed";
-  result?: ExtractionResult;
-  error?: string;
+  status: "success";
+  fileName: string;
+  summary: string;
+  entities: {
+    names: string[];
+    organizations: string[];
+    dates: string[];
+    amounts: string[];
+  };
+  sentiment: string;
 }
 
 export interface ExtractionResult {
@@ -61,10 +62,15 @@ export const uploadDocument = async (
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<UploadResponse> => {
-  const formData = new FormData();
-  formData.append("file", file);
+  const fileBase64 = await fileToBase64(file);
+  const fileType = inferFileType(file);
+  const payload = {
+    fileName: file.name,
+    fileType,
+    fileBase64,
+  };
 
-  const { data } = await apiClient.post<UploadResponse>("/api/document-analyze", formData, {
+  const { data } = await apiClient.post<UploadResponse>("/api/document-analyze", payload, {
     onUploadProgress: (progressEvent) => {
       if (onProgress && progressEvent.total) {
         const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -72,11 +78,6 @@ export const uploadDocument = async (
       }
     },
   });
-  return data;
-};
-
-export const getTaskStatus = async (taskId: string): Promise<TaskStatus> => {
-  const { data } = await apiClient.get<TaskStatus>(`/api/task/${taskId}`);
   return data;
 };
 
