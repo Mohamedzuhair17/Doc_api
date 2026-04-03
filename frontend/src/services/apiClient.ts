@@ -3,11 +3,14 @@ import axios from "axios";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const API_KEY = import.meta.env.VITE_API_KEY || "";
 
+const headers: Record<string, string> = {};
+if (API_KEY) {
+  headers["x-api-key"] = API_KEY;
+}
+
 const apiClient = axios.create({
   baseURL: API_URL,
-  headers: {
-    "x-api-key": API_KEY || undefined,
-  },
+  headers,
 });
 
 export interface UploadResponse {

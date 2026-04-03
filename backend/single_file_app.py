@@ -3,7 +3,7 @@ import uuid
 import json
 import time
 import threading
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict
@@ -13,10 +13,6 @@ import uvicorn
 TASKS: Dict[str, Dict] = {}
 
 app = FastAPI(title="Document AI - Single File", version="1.0")
-
-class DocumentRequest(BaseModel):
-    file_base64: str
-    file_type: str
 
 class TaskResponse(BaseModel):
     task_id: str
@@ -43,7 +39,7 @@ def home():
   <div class='card'>
     <h1>Document AI frontend+backend in one file</h1>
     <p>Upload text or data as base64 and start a job.</p>
-    <textarea id='content' class='text' placeholder='Paste plain text, then click run'></textarea>
+    <input id='file' type='file' />
     <br>
     <button class='btn' onclick='startTask()'>Start Task</button>
     <p id='taskId'>Task ID: <em>-</em></p>
@@ -52,14 +48,15 @@ def home():
   </div>
   <script>
     async function startTask() {
-      const text = document.getElementById('content').value.trim();
-      if (!text) return alert('Enter some text to simulate document data.');
-      const b64 = btoa(unescape(encodeURIComponent(text)));
+      const input = document.getElementById('file');
+      const selectedFile = input.files[0];
+      if (!selectedFile) return alert('Choose a file first.');
+      const formData = new FormData();
+      formData.append('file', selectedFile);
 
       const resp = await fetch('/api/document-analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_base64: b64, file_type: 'text' }),
+        body: formData,
       });
       const data = await resp.json();
       document.getElementById('taskId').innerHTML = 'Task ID: <strong>' + data.task_id + '</strong>';
@@ -87,16 +84,18 @@ def home():
     return HTMLResponse(content=html)
 
 @app.post("/api/document-analyze", response_model=TaskResponse)
-def analyze_document(request: DocumentRequest):
+async def analyze_document(file: UploadFile = File(...)):
     task_id = str(uuid.uuid4())
     TASKS[task_id] = {"status": "queued", "result": None}
+    content = await file.read()
+    file_base64 = base64.b64encode(content).decode("utf-8")
 
-    def background_process(task_id: str, req: DocumentRequest):
+    def background_process(task_id: str, encoded_file: str):
         try:
             TASKS[task_id]["status"] = "processing"
             # quick simulated work
             time.sleep(2)
-            decoded = base64.b64decode(req.file_base64).decode('utf-8', errors='replace')
+            decoded = base64.b64decode(encoded_file).decode('utf-8', errors='replace')
             summary = decoded.strip().slice(0, 280) if hasattr(decoded.strip(), 'slice') else decoded.strip()
             entities = {"length": len(decoded), "words": len(decoded.split())}
 
@@ -110,7 +109,7 @@ def analyze_document(request: DocumentRequest):
             TASKS[task_id]["status"] = "failed"
             TASKS[task_id]["result"] = {"error": str(e)}
 
-    thread = threading.Thread(target=background_process, args=(task_id, request))
+    thread = threading.Thread(target=background_process, args=(task_id, file_base64))
     thread.start()
 
     return TaskResponse(task_id=task_id, status="queued")

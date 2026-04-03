@@ -58,7 +58,6 @@ async def verify_api_key(x_api_key: str = Header(...)):
 @app.post("/api/document-analyze", status_code=202, response_model=TaskResponse)
 async def analyze_document(
     file: UploadFile = File(...),
-    api_key: str = Depends(verify_api_key)
 ) -> TaskResponse:
     """
     Analyze document (async).
