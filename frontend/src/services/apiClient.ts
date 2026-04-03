@@ -4,12 +4,14 @@ const DEFAULT_API_URL = "https://doc-api-efwm.onrender.com";
 const rawApiUrl = (import.meta.env.VITE_API_URL || "").trim();
 const isAbsoluteUrl = /^https?:\/\//i.test(rawApiUrl);
 const API_URL = (isAbsoluteUrl ? rawApiUrl : DEFAULT_API_URL).replace(/\/+$/, "");
-const API_KEY = (import.meta.env.VITE_API_KEY || "").trim();
+const API_KEY = (
+  import.meta.env.VITE_API_KEY ||
+  import.meta.env.VITE_API_SECRET_KEY ||
+  "mysecretkey123"
+).trim();
 
 const headers: Record<string, string> = {};
-if (API_KEY) {
-  headers["x-api-key"] = API_KEY;
-}
+headers["x-api-key"] = API_KEY;
 
 const apiClient = axios.create({
   baseURL: API_URL,

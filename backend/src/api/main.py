@@ -50,6 +50,13 @@ app.add_middleware(
 )
 
 API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
+API_SECRET_KEYS = {
+    key.strip()
+    for key in os.environ.get("API_SECRET_KEYS", "").split(",")
+    if key.strip()
+}
+if API_SECRET_KEY:
+    API_SECRET_KEYS.add(API_SECRET_KEY)
 
 
 class DocumentRequest(BaseModel):
@@ -279,7 +286,10 @@ async def analyze_document(
     request: DocumentRequest,
     x_api_key: Optional[str] = Header(default=None),
 ):
-    if not API_SECRET_KEY or x_api_key != API_SECRET_KEY:
+    if not API_SECRET_KEYS:
+        raise HTTPException(status_code=500, detail="API keys are not configured on server")
+
+    if not x_api_key or x_api_key not in API_SECRET_KEYS:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
