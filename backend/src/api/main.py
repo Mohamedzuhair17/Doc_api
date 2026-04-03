@@ -3,7 +3,7 @@ FastAPI Backend with Caching
 Returns task ID immediately (no timeout risk).
 """
 
-from fastapi import FastAPI, Header, HTTPException, status, Depends
+from fastapi import FastAPI, Header, HTTPException, status, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.schemas import DocumentRequest, TaskResponse
 from src.core.config import settings
@@ -13,6 +13,7 @@ import json
 import uuid
 import os
 import logging
+import base64
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def verify_api_key(x_api_key: str = Header(...)):
 
 @app.post("/api/document-analyze", status_code=202, response_model=TaskResponse)
 async def analyze_document(
-    request: DocumentRequest,
+    file: UploadFile = File(...),
     api_key: str = Depends(verify_api_key)
 ) -> TaskResponse:
     """
@@ -62,16 +63,29 @@ async def analyze_document(
     # are unavailable in serverless environments.
     from src.workers.tasks import process_document
 
+    # Read file content
+    content = await file.read()
+    file_base64 = base64.b64encode(content).decode('utf-8')
+    
+    # Determine file type from filename
+    filename = file.filename or ""
+    if filename.lower().endswith('.pdf'):
+        file_type = 'pdf'
+    elif filename.lower().endswith('.docx'):
+        file_type = 'docx'
+    else:
+        file_type = 'image'
+
     # Generate unique task ID
     task_id = str(uuid.uuid4())
     
     # Queue task with the generated ID
     process_document.apply_async(
-        args=[request.file_base64, request.file_type, task_id],
+        args=[file_base64, file_type, task_id],
         task_id=task_id
     )
     
-    logger.info(f"Task {task_id} queued for {request.file_type}")
+    logger.info(f"Task {task_id} queued for {file_type}")
     
     return TaskResponse(
         task_id=task_id,

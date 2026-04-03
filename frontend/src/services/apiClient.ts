@@ -7,7 +7,6 @@ const apiClient = axios.create({
   baseURL: API_URL,
   headers: {
     "x-api-key": API_KEY || undefined,
-    "Content-Type": "application/json",
   },
 });
 
@@ -59,13 +58,17 @@ export const uploadDocument = async (
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<UploadResponse> => {
-  const fileBase64 = await fileToBase64(file);
-  const payload = {
-    file_base64: fileBase64,
-    file_type: inferFileType(file),
-  };
+  const formData = new FormData();
+  formData.append("file", file);
 
-  const { data } = await apiClient.post<UploadResponse>("/api/document-analyze", payload);
+  const { data } = await apiClient.post<UploadResponse>("/api/document-analyze", formData, {
+    onUploadProgress: (progressEvent) => {
+      if (onProgress && progressEvent.total) {
+        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onProgress(progress);
+      }
+    },
+  });
   return data;
 };
 
