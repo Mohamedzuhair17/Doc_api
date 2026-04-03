@@ -26,7 +26,14 @@ app = FastAPI(
 # Enable CORS for local frontend development and production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:8000", "https://doc-mcy2e530p-mohamedzuhair17s-projects.vercel.app"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://doc-api-nu.vercel.app",
+        "https://doc-api-mohamedzuhair17s-projects.vercel.app",
+        "https://doc-mcy2e530p-mohamedzuhair17s-projects.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
